@@ -1,0 +1,316 @@
+ <!DOCTYPE html> 
+
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dashboard de Contatos</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.17.5/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; background: #f0f2f5; }
+    #upload { margin-bottom: 20px; }
+    .kpi-cards { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 30px; }
+    .card {
+      background: #ffffff;
+      padding: 15px; border-radius: 12px;
+      flex: 1 1 180px; text-align: center;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+    .card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 10px rgba(0,0,0,0.15);
+    }
+    .card h3 { margin: 0 0 5px; font-size: 1.1em; color: #333; }
+    .card p { margin: 5px 0 0; font-size: 1.4em; font-weight: bold; }
+    .card small { display: block; color: #777; margin-top: 4px; }
+    .card i {
+      font-size: 1.8em; display: block; margin-bottom: 5px;
+      transition: color 0.3s ease;
+    }
+    .card.efetivo { background: #e9f2ff; color: #004085; }
+    .card.efetivo i { color: #007bff; }
+    .card.efetivo:hover i { color: #0056b3; }
+    .card.sucesso { background: #e6f4ea; color: #155724; }
+    .card.sucesso i { color: #28a745; }
+    .card.sucesso:hover i { color: #1c7c35; }
+    .card.tma { background: #f0eaff; color: #3b2073; }
+    .card.tma i { color: #6f42c1; }
+    .card.tma:hover i { color: #4e2a91; }
+
+```
+section { margin-bottom: 40px; }
+section h2 { margin-bottom: 10px; color: #444; border-bottom: 2px solid #ddd; padding-bottom: 5px; }
+section h3 { margin-top: 10px; margin-bottom: 10px; color: #666; }
+
+.charts { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.chart-container { background: #fff; padding: 15px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+.chart-title {
+  font-weight: bold; font-size: 1em; margin-bottom: 10px; color: #444; text-align: center;
+}
+
+table { width: 100%; border-collapse: collapse; margin-top: 10px; background: #fff; }
+th, td { border: 1px solid #ccc; padding: 8px; text-align: center; }
+th { background: #f5f5f5; }
+```
+
+  </style>
+</head>
+<body>
+  <h1>Dashboard de Contatos</h1>
+  <p>Faça upload da sua planilha para gerar a análise completa.</p>
+  <input type="file" id="upload" accept=".xlsx, .xls, .csv" />
+
+  <section>
+    <h2>KPI Principais</h2>
+    <h3>Visão geral dos indicadores críticos</h3>
+    <div class="kpi-cards" id="kpis"></div>
+  </section>
+
+  <section>
+    <h2>Insights de Performance</h2>
+    <h3>Operadores destaque por KPI</h3>
+    <div class="kpi-cards" id="insights"></div>
+  </section>
+
+  <section>
+    <h2>Tendência de Contatos</h2>
+    <h3>Evolução de Leads Trabalhados, Contatados e Contat. Efetivos</h3>
+    <div class="charts">
+      <div class="chart-container">
+        <div class="chart-title">Evolução Diária</div>
+        <canvas id="trendChart"></canvas>
+      </div>
+      <div class="chart-container">
+        <div class="chart-title">Contat. Efetivos e Sucesso por Operador</div>
+        <canvas id="operatorBarChart"></canvas>
+      </div>
+      <div class="chart-container">
+        <div class="chart-title">Top 10 Consultores: Sucesso e TMA</div>
+        <canvas id="top10Chart"></canvas>
+      </div>
+      <div class="chart-container">
+        <div class="chart-title">Distribuição de Tempo por Operador</div>
+        <canvas id="stackedChart"></canvas>
+      </div>
+    </div>
+  </section>
+
+  <script>
+    document.getElementById('upload').addEventListener('change', handleFile, false);
+
+    function parseTime(val) {
+      const s = (val == null ? '' : String(val))
+        .replace(/[^\d:]/g, '').trim();
+      const parts = s.split(':').map(Number);
+      if (parts.length===3) return parts[0]*3600 + parts[1]*60 + parts[2];
+      if (parts.length===2) return parts[0]*60 + parts[1];
+      if (!isNaN(+s)) return +s;
+      return 0;
+    }
+    function formatTime(sec) {
+      if (!isFinite(sec)||sec<=0) return '00:00';
+      const h=Math.floor(sec/3600), m=Math.floor((sec%3600)/60), s=Math.floor(sec%60);
+      const mm=String(m).padStart(2,'0'), ss=String(s).padStart(2,'0');
+      return h>0?`${String(h).padStart(2,'0')}:${mm}:${ss}`:`${mm}:${ss}`;
+    }
+
+    function handleFile(e){
+      const reader=new FileReader();
+      reader.onload=ev=>{
+        const wb=XLSX.read(ev.target.result,{type:'binary'});
+        const raw = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1 });
+        const headers = raw[0].map(h => h.trim());
+        const data = raw.slice(1).map(row => {
+          const obj = {};
+          headers.forEach((h, i) => obj[h] = row[i]);
+          return obj;
+        });
+
+        renderDashboard(data);
+      };
+      reader.readAsBinaryString(e.target.files[0]);
+    }
+
+    function renderDashboard(data){
+      const tmaKey=Object.keys(data[0]).find(k=>/TMA/i.test(k));
+    
+      // KPIs gerais
+      const totalLeads=data.reduce((s,r)=>s+(+r['Leads Trab.']||0),0);
+      const totalCont= data.reduce((s,r)=>s+(+r['Contatados']||0),0);
+      const totalEfe=  data.reduce((s,r)=>s+(+r['Contat. Efetivos']||0),0);
+      const totalSuc=  data.reduce((s,r)=>s+(+r['Sucesso']||0),0);
+      
+      // =============[ AJUSTE AQUI ]=============
+      // Novo cálculo do TMA considerando apenas contatos efetivos
+      const tmaData = data.filter(r => +r['Contat. Efetivos'] > 0);
+      const totalTma = tmaData.reduce((s,r) => s + parseTime(r[tmaKey]), 0);
+      const avgTma = tmaData.length ? totalTma / tmaData.length : 0;
+      // =========================================
+    
+      const revE= totalCont? (totalEfe/totalCont*100).toFixed(1):0;
+      const totalRec=data.reduce((s,r)=>s+(+r['Receita']||0),0);
+  
+      const kpis=[
+        ['Leads Trabalhados', totalLeads],
+        ['Contatados', totalCont],
+        ['Contat. Efetivos', totalEfe],
+        ['TMA Médio', formatTime(avgTma)],
+        ['Rev. Efet. %', revE+'%'],
+        ['Sucesso', totalSuc],
+        ['Receita', totalRec.toFixed(2)]
+      ];
+      const kpiBox=document.getElementById('kpis');
+      kpiBox.innerHTML='';
+      kpis.forEach(([l,v])=>{
+        const c=document.createElement('div');
+        c.className='card';
+        c.innerHTML=`<h3>${l}</h3><p>${v}</p>`;
+        kpiBox.appendChild(c);
+      });
+
+        // Ranking e insights
+  const oper=data.map(r=>({
+    operador:r.Operador,
+    efetivos:+r['Contat. Efetivos']||0,
+    sucesso:+r['Sucesso']||0,
+    // =============[ AJUSTE AQUI ]=============
+    tmaSec: (+r['Contat. Efetivos'] > 0) ? parseTime(r[tmaKey]) : 0
+    // =========================================
+  }));
+
+      // preenchendo tabela
+      const tb=document.querySelector('#rankTable tbody');
+      if(tb){
+        tb.innerHTML='';
+        oper.forEach((r,i)=>{
+          tb.innerHTML+=`<tr>
+            <td>${i+1}</td>
+            <td>${r.operador}</td>
+            <td>${r.efetivos}</td>
+            <td>${r.sucesso}</td>
+            <td>${formatTime(r.tmaSec)}</td>
+          </tr>`;
+        });
+      }
+
+      // insights
+      const bestE=oper[0];
+      const bestS=oper.reduce((a,b)=>b.sucesso>a.sucesso?b:a);
+      const validT=oper.filter(r=>r.tmaSec>0);
+      const bestT= validT.length
+        ? validT.reduce((a,b)=>b.tmaSec<a.tmaSec?b:a)
+        : {operador:'N/A',tmaSec:0};
+
+      const insArr=[
+        {titulo:'Mais Contat. Efetivos', operador:bestE.operador, valor:bestE.efetivos, ic:'bi-people-fill', classe:'efetivo'},
+        {titulo:'Maior Sucesso', operador:bestS.operador, valor:bestS.sucesso, ic:'bi-check-circle-fill', classe:'sucesso'},
+        {titulo:'Menor TMA', operador:bestT.operador, valor:formatTime(bestT.tmaSec), ic:'bi-clock-fill', classe:'tma'}
+      ];
+      const insBox=document.getElementById('insights');
+      insBox.innerHTML='';
+      insArr.forEach(ins=>{
+        const c=document.createElement('div');
+        c.className=`card ${ins.classe}`;
+        c.innerHTML=`<i class="bi ${ins.ic}"></i>
+          <h3>${ins.titulo}</h3><p>${ins.valor}</p><small>${ins.operador}</small>`;
+        insBox.appendChild(c);
+      });
+
+      // GRÁFICOS
+      const labels=data.map(r=>r.Operador);
+
+      drawLine('trendChart',
+        labels,
+        [
+          {label:'Leads Trabalhados', data:data.map(r=>+r['Leads Trab.']||0)},
+          {label:'Contatados', data:data.map(r=>+r['Contatados']||0)},
+          {label:'Contat. Efetivos', data:data.map(r=>+r['Contat. Efetivos']||0)}
+        ]
+      );
+
+      drawBar('operatorBarChart',
+        labels,
+        [
+          {label:'Contat. Efetivos', data:data.map(r=>+r['Contat. Efetivos']||0)},
+          {label:'Sucesso', data:data.map(r=>+r['Sucesso']||0)}
+        ]
+      );
+
+      // Top 10 Sucesso x TMA
+      const bySuc=[...oper].sort((a,b)=>b.sucesso-a.sucesso).slice(0,10);
+      const topLabels=bySuc.map(r=>r.operador);
+      const topSuc=bySuc.map(r=>r.sucesso);
+      const topTma=bySuc.map(r=>r.tmaSec);
+
+      // duplicar container se quiser manter layout 2x2
+      drawTop10('top10Chart', topLabels, topSuc, topTma);
+
+      drawStacked('stackedChart',
+        labels,
+        [
+          {label:'Produtivo', data:data.map(r=>parseTime(r['Produtivo']))},
+          {label:'Pausa Produtiva', data:data.map(r=>parseTime(r['Pausa Produtiva']))},
+          {label:'Pausa Improdutiva', data:data.map(r=>parseTime(r['Pausa Improdutiva']))},
+          {label:'Disponível', data:data.map(r=>parseTime(r['Disponível']))}
+        ]
+      );
+    }
+
+    function drawLine(id, labels, series){
+      new Chart(document.getElementById(id).getContext('2d'), {
+        type:'line',
+        data:{ labels, datasets: series.map(s=>({ label:s.label, data:s.data, fill:false })) },
+        options:{ responsive:true }
+      });
+    }
+    function drawBar(id, labels, series){
+      new Chart(document.getElementById(id).getContext('2d'), {
+        type:'bar',
+        data:{ labels, datasets: series.map(s=>({ label:s.label, data:s.data })) },
+        options:{ responsive:true, scales:{ x:{ stacked:false }, y:{ beginAtZero:true } } }
+      });
+    }
+    function drawTop10(id, labels, suc, tma){
+      new Chart(document.getElementById(id).getContext('2d'), {
+        data:{
+          labels,
+          datasets:[
+            {
+              type:'bar',
+              label:'Sucesso',
+              data:suc,
+              yAxisID:'y1'
+            },
+            {
+              type:'line',
+              label:'TMA (s)',
+              data:tma,
+              yAxisID:'y2',
+              tension:0.3,
+              fill:false
+            }
+          ]
+        },
+        options:{
+          responsive:true,
+          scales:{
+            y1:{ type:'linear', position:'left', title:{ display:true, text:'Sucesso' }, beginAtZero:true },
+            y2:{ type:'linear', position:'right', title:{ display:true, text:'TMA (s)' }, grid:{ drawOnChartArea:false } }
+          }
+        }
+      });
+    }
+    function drawStacked(id, labels, series){
+      new Chart(document.getElementById(id).getContext('2d'), {
+        type:'bar',
+        data:{ labels, datasets: series.map(s=>({ label:s.label, data:s.data })) },
+        options:{ responsive:true, scales:{ x:{ stacked:true }, y:{ stacked:true } } }
+      });
+    }
+  </script>
+
+</body>
+</html>
